@@ -12,7 +12,7 @@
 //@property(nonatomic, strong)NSTimer *timer;
 //@property(nonatomic, assign)NSInteger repeatCount;
 @property(nonatomic, strong)dispatch_queue_t timerQueue;
-@property(nonatomic, strong)dispatch_queue_t captureQueue;
+//@property(nonatomic, strong)dispatch_queue_t captureQueue;
 @property(nonatomic, strong)dispatch_source_t timer;
 @end
 
@@ -23,7 +23,7 @@
     
     self.timerQueue = dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0);
 
-    self.captureQueue = dispatch_queue_create("com.baidu.hi.mac.capture_continues", DISPATCH_QUEUE_SERIAL);
+//    self.captureQueue = dispatch_queue_create("com.baidu.hi.mac.capture_continues", DISPATCH_QUEUE_SERIAL);
 }
 
 - (IBAction)startCapture:(NSButton *)sender {
@@ -33,7 +33,7 @@
     //延时
     NSTimeInterval delayTime = 0.0f;
     
-    //间隔
+    //间隔  20帧设置100间隔  如果 10帧 则间隔更长一些 200
     NSTimeInterval interval = 100;
     
     dispatch_time_t startDelayTime = dispatch_time(DISPATCH_TIME_NOW, (int64_t)(delayTime * NSEC_PER_SEC));
@@ -46,15 +46,10 @@
         
         // if you need to also do any UI updates, synchronize model updates,
         // or the like, dispatch that back to the main queue:
-        dispatch_async(self.captureQueue, ^{
-            [self dealImage];
-        });
+        [self dealImage];
     });
     dispatch_resume(self.timer);
 }
-
-
-
 
 - (void)dealImage {
     NSScreen *screen = [[NSScreen screens] firstObject];
@@ -62,15 +57,15 @@
     
     NSLog(@"屏幕信息:\n%@\n",screen.deviceDescription);
     CGImageRef imgRef = [[self class] screenShot:screen];
-    NSRect mainFrame = screen.frame;
-    NSImage *image = [[NSImage alloc] initWithCGImage:imgRef size:mainFrame.size];
-    [self captureAppScreen:image];
-    CGImageRelease(imgRef);
+//    NSRect mainFrame = screen.frame;
+//    NSImage *image = [[NSImage alloc] initWithCGImage:imgRef size:mainFrame.size];
+    [self captureAppScreen:imgRef];
+    
+    imgRef = nil;
+//    image = nil;
 }
 
-
-
-- (void)captureAppScreen:(NSImage *)image {
+- (void)captureAppScreen:(CGImageRef)imgRef {
     
     static NSDateFormatter* formatter;
     static NSURL*           homeDir;
@@ -83,39 +78,111 @@
     });
     NSString* date = [formatter stringFromDate:[NSDate date]];
     
-    if (image) {
-        NSData *imgData = [image TIFFRepresentation];
-        NSBitmapImageRep *bitmap = [NSBitmapImageRep imageRepWithData:imgData];
+//    if (image) {
+//        NSData *imgData = [image TIFFRepresentation];
+//        NSBitmapImageRep *bitmap = [NSBitmapImageRep imageRepWithData:imgData];
+        NSBitmapImageRep *bitmap = [[NSBitmapImageRep alloc] initWithCGImage:imgRef];
+    
 //        NSDictionary *imageProps = @{NSImageCompressionFactor: @0.5f}; //压缩系数
         NSData* newData = [bitmap representationUsingType:NSBMPFileType properties:@{}];
         
         NSString *randomStr = [NSString stringWithFormat:@"%@-%zd.bmp",date,arc4random()];
         NSURL *bmpPath = [homeDir URLByAppendingPathComponent:randomStr];
+        
         [newData writeToURL:bmpPath atomically:YES];
-        image = nil;
-    }
+        CGImageRelease(imgRef);
+//        image = nil;
+        newData = nil;
+//        imgData = nil;
+//    }
 }
 
 + (CGImageRef)screenShot:(NSScreen *)screen
 {
-    CFArrayRef windowsRef = CGWindowListCreate(kCGWindowListOptionOnScreenOnly, kCGNullWindowID);
-    
-    NSRect rect = screen.frame;
-    NSRect mainRect = [NSScreen mainScreen].frame;
-    for (NSScreen *subScreen in [NSScreen screens]) {
-        if ((int) subScreen.frame.origin.x == 0 && (int) subScreen.frame.origin.y == 0) {
-            mainRect = subScreen.frame;
+    @autoreleasepool {
+        CFArrayRef windowsRef = CGWindowListCreate(kCGWindowListOptionIncludingWindow, kCGNullWindowID);
+        
+        NSRect rect = screen.frame;
+        NSRect mainRect = [NSScreen mainScreen].frame;
+        for (NSScreen *subScreen in [NSScreen screens]) {
+            if ((int) subScreen.frame.origin.x == 0 && (int) subScreen.frame.origin.y == 0) {
+                mainRect = subScreen.frame;
+            }
         }
+        
+        rect = NSMakeRect(rect.origin.x, (mainRect.size.height) - (rect.origin.y + rect.size.height), rect.size.width, rect.size.height);
+        
+        NSLog(@"screenShot: %@", NSStringFromRect(rect));
+        CGImageRef imgRef = CGWindowListCreateImageFromArray(rect, windowsRef, kCGWindowImageDefault);
+        CGImageRef finalImgRef = [[self class] appendMouseCursor:imgRef];
+        CGImageRelease(imgRef);
+        imgRef = nil;
+        CFRelease(windowsRef);
+        windowsRef = nil;
+        return finalImgRef;
     }
     
-    rect = NSMakeRect(rect.origin.x, (mainRect.size.height) - (rect.origin.y + rect.size.height), rect.size.width, rect.size.height);
-    
-    NSLog(@"screenShot: %@", NSStringFromRect(rect));
-    CGImageRef imgRef = CGWindowListCreateImageFromArray(rect, windowsRef, kCGWindowImageDefault);
-    CFRelease(windowsRef);
-    
-    return imgRef;
 }
+
+
+
++(CGImageRef)appendMouseCursor:(CGImageRef)pSourceImage{
+    // get the cursor image
+    NSPoint mouseLoc = [NSEvent mouseLocation]; //get cur
+    
+    NSLog(@"Mouse location is x=%.f,y=%.f",mouseLoc.x,mouseLoc.y);
+    
+    // get the mouse image
+    NSImage *overlay    =   [[[NSCursor currentCursor] image] copy];
+    
+    NSLog(@"Mouse location is x=%d,y=%d cursor width = %d, cursor height = %d",(int)mouseLoc.x,(int)mouseLoc.y,(int)[overlay size].width,(int)[overlay size].height);
+    
+    CGFloat x = mouseLoc.x;
+    CGFloat y = mouseLoc.y;
+    CGFloat w = [overlay size].width;
+    CGFloat h = [overlay size].height;
+    CGFloat org_x = x;
+    CGFloat org_y = y;
+    
+    size_t height = CGImageGetHeight(pSourceImage);
+    size_t width =  CGImageGetWidth(pSourceImage);
+    size_t bytesPerRow = CGImageGetBytesPerRow(pSourceImage);
+    
+    unsigned int * imgData = (unsigned int*)malloc(height*bytesPerRow);
+    
+    // have the graphics context now,
+    CGRect bgBoundingBox = CGRectMake (0, 0, width,height);
+    
+    CGContextRef context =  CGBitmapContextCreate(imgData, width,
+                                                  height,
+                                                   8, // 8 bits per component
+                                                  bytesPerRow,
+                                                  CGImageGetColorSpace(pSourceImage),
+                                                  CGImageGetBitmapInfo(pSourceImage));
+    
+    // first draw the image
+    CGContextDrawImage(context,bgBoundingBox,pSourceImage);
+    
+    // then mouse cursor
+    CGContextDrawImage(context,CGRectMake(0, 0, width,height),pSourceImage);
+    
+    
+    // then mouse cursor
+    CGContextDrawImage(context,CGRectMake(org_x, org_y, w,h),[overlay CGImageForProposedRect: NULL context: NULL hints: NULL] );
+    
+    
+    // assuming both the image has been drawn then create an Image Ref for that
+    
+    CGImageRef pFinalImage = CGBitmapContextCreateImage(context);
+    
+    CGContextRelease(context);
+    free(imgData);
+    context = nil;
+    overlay = nil;
+    return pFinalImage; /* to be released by the caller */
+}
+
+
 
 - (IBAction)stopAction:(NSButton *)sender {
     
